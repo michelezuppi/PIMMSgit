@@ -1,0 +1,18 @@
+#Vcontact3
+
+
+#Installing vContact3
+mamba create --name vcontact3 python=3.10
+mamba activate vcontact3
+mamba install -c bioconda -c conda-forge vcontact3
+
+#Run vcontact3
+#Initially download the database
+cd ~/PIMMsgit/data/input/
+mkdir databases
+cd databases
+mkdir virus-host-db
+cd virus-host-db
+vcontact3 prepare_databases --get-version latest --set-location .
+#run vcontact3
+bash vcontact3.sh
