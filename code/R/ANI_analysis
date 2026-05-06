@@ -1,0 +1,87 @@
+#Check the ANI
+
+library(tidyverse)
+library(ggpubr)
+library(ggbeeswarm)
+library(rstatix)
+library(twosamples)
+setwd("~/PIMMSgit/data/phages/unified/vclust")
+list.files()
+ANI <- read_tsv("_ani.tsv")
+
+ANI_analysis <- 
+    ANI %>% 
+    select(c(query, reference, tani)) %>% 
+    filter(tani > 0.95) %>% 
+    mutate(query = str_remove(query, "\\|\\|.*")) %>% #Clean the sequence name
+    mutate(reference = str_remove(reference, "\\|\\|.*")) %>% #Clean the sequence name
+    mutate(
+        individual_q = str_extract(query, "(?<=_)[^_]+(?=_[^_]+$)"),
+        timepoint_q  = str_extract(query, "[^_]+$")) %>% 
+    mutate(
+        individual_r = str_extract(reference, "(?<=_)[^_]+(?=_[^_]+$)"),
+        timepoint_r  = str_extract(reference, "[^_]+$"))
+
+#Plot generation
+timepoints <- c(2, 4, 7, 14, 28) # Define post-transplant timepoints to analyse
+
+deduplicate <- function(data, type_label) { # Function to remove reciprocal duplicate pairs (A vs B = B vs A)
+  data %>%
+    mutate(pair_key = map2_chr(query, reference, \(q, r) paste(sort(c(q, r)), collapse = "|||"))) %>% # Create a sorted pair key so A-B and B-A get the same key
+    distinct(pair_key, .keep_all = TRUE) %>% # Keep only one row per unique pair
+    select(tani) %>% # Keep only the tANI similarity score
+    mutate(type = type_label) # Add a label column for the pair type
+}
+
+donor_by_tp <- map_dfr(timepoints, ~ # For each timepoint, extract same-individual donor vs post-transplant pairs
+  ANI_analysis %>%
+    filter(timepoint_q %in% c("D004", .x), timepoint_r %in% c("D004", .x),
+           individual_q == individual_r, timepoint_q != timepoint_r) %>% # Keep pairs from the same individual, one from donor baseline and one from the current timepoint
+    deduplicate("Engrafted") %>% # Deduplicate and label as "Engrafted"
+    mutate(timepoint = .x) # Record which timepoint this belongs to
+)
+
+diff_by_tp <- map_dfr(timepoints, ~ # For each timepoint, extract cross-individual pre-transplant vs post-transplant pairs
+  ANI_analysis %>%
+    filter(timepoint_q %in% c(0, .x), timepoint_r %in% c(0, .x),
+           individual_q != individual_r, timepoint_q != timepoint_r) %>% # Keep pairs from different individuals, one from day 0 and one from the current timepoint
+    deduplicate("Different") %>% # Deduplicate and label as "Different"
+    mutate(timepoint = .x) # Record which timepoint this belongs to
+)
+
+combined <- bind_rows(donor_by_tp, diff_by_tp) %>% # Combine both pair types into one dataframe
+  mutate(timepoint = factor(timepoint, levels = timepoints)) # Convert timepoint to ordered factor for correct plot ordering
+
+wass_results <- map_dfr(timepoints, ~{ # Run Wasserstein test at each timepoint comparing Different vs Engrafted
+  tp <- .x
+  wt <- wass_test(
+    combined$tani[combined$type == "Different" & combined$timepoint == tp],
+    combined$tani[combined$type == "Engrafted"  & combined$timepoint == tp]
+  ) # Compute Wasserstein distance and p-value between the two distributions
+  tibble(timepoint = factor(tp, levels = timepoints),
+         label = paste0("Different vs Engrafted, p=", signif(wt[2], 3))) # Format p-value to 3 significant figures
+})
+
+counts <- combined %>%
+  count(timepoint, type) %>% # Count number of pairs per type per timepoint
+  mutate(count_label = paste0(type, ": n=", n)) %>% # Format count as readable label
+  group_by(timepoint) %>%
+  summarise(count_label = paste(count_label, collapse = "\n"), .groups = "drop") # Collapse both type counts into a single string per timepoint
+
+plot_labels <- wass_results %>%
+  left_join(counts, by = "timepoint") %>% # Join p-value labels with sample count labels
+  mutate(full_label = paste0(label, "\n\n", count_label)) # Combine into one annotation string per timepoint
+
+combined %>%
+  ggplot(aes(x = tani, fill = type)) + # Plot tANI distributions coloured by pair type
+  geom_density(alpha = 0.5) + # Overlay semi-transparent density curves
+  scale_fill_viridis_d(option = "magma") + # Use magma colour palette
+  theme_classic2() + # Apply clean classic theme
+  theme(strip.text = element_text(size = 12), aspect.ratio = 0.8) + # Style facet labels and fix panel proportions
+  facet_wrap(~timepoint, labeller = label_both, scales = "free_x") + # One panel per timepoint with free x-axis scaling
+  geom_text(data = plot_labels,
+            aes(x = 0.99, y = 75, label = full_label),
+            inherit.aes = FALSE,
+            hjust = 1, vjust = 1.5, size = 3) # Annotate each panel with p-value and sample counts, top-right aligned
+
+ggsave("~/PIMMSgit/plots/ani_plot.pdf", plot = last_plot(), width = 16, height = 10)
