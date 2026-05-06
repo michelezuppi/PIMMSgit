@@ -8,7 +8,17 @@ library(twosamples)
 setwd("~/PIMMSgit/data/phages/unified/vclust")
 list.files()
 ANI <- read_tsv("_ani.tsv")
+load("~/PIMMSgit/data/Rdata/vOTUs_clusters.Rdata")
 
+view(vOTUs_clusters)
+view(ANI_analysis)
+
+vOTUs_clusters <- 
+    vOTUs_clusters  %>% 
+    mutate(object = str_remove(object, "\\|\\|.*")) %>% #Clean the sequence name
+    mutate(cluster = str_remove(cluster, "\\|\\|.*")) #Clean the sequence name
+
+    
 ANI_analysis <- 
     ANI %>% 
     select(c(query, reference, tani)) %>% 
@@ -22,17 +32,24 @@ ANI_analysis <-
         individual_r = str_extract(reference, "(?<=_)[^_]+(?=_[^_]+$)"),
         timepoint_r  = str_extract(reference, "[^_]+$"))
 
+    view(ANI_analysis)
+
 #Plot generation
 timepoints <- c(2, 4, 7, 14, 28) # Define post-transplant timepoints to analyse
 
-deduplicate <- function(data, type_label) { # Function to remove reciprocal duplicate pairs (A vs B = B vs A)
+
+deduplicate <- function(data, type_label) { # Function to remove reciprocal duplicate pairs (A vs B = B vs A) and collapse to one tANI per vOTU per individual pair
   data %>%
     mutate(pair_key = map2_chr(query, reference, \(q, r) paste(sort(c(q, r)), collapse = "|||"))) %>% # Create a sorted pair key so A-B and B-A get the same key
     distinct(pair_key, .keep_all = TRUE) %>% # Keep only one row per unique pair
-    select(tani) %>% # Keep only the tANI similarity score
+    left_join(vOTUs_clusters, by = c("query" = "object")) %>% # Try joining vOTU on query
+    left_join(vOTUs_clusters, by = c("reference" = "object"), suffix = c("_q", "_r")) %>% # Try joining vOTU on reference
+    mutate(vOTU = coalesce(cluster_q, cluster_r)) %>% # Take whichever join succeeded
+    group_by(vOTU, individual_q, individual_r) %>% # One tANI per vOTU per individual pair
+    summarise(tani = mean(tani), .groups = "drop") %>%  # Select the mean
+    select(tani, vOTU) %>% # Keep tANI and vOTU
     mutate(type = type_label) # Add a label column for the pair type
 }
-
 donor_by_tp <- map_dfr(timepoints, ~ # For each timepoint, extract same-individual donor vs post-transplant pairs
   ANI_analysis %>%
     filter(timepoint_q %in% c("D004", .x), timepoint_r %in% c("D004", .x),
@@ -41,7 +58,7 @@ donor_by_tp <- map_dfr(timepoints, ~ # For each timepoint, extract same-individu
     mutate(timepoint = .x) # Record which timepoint this belongs to
 )
 
-diff_by_tp <- map_dfr(timepoints, ~ # For each timepoint, extract cross-individual pre-transplant vs post-transplant pairs
+diff_by_tp <- map_dfr(timepoints, ~ #For each timepoint, extract cross-individual pre-transplant vs post-transplant pairs
   ANI_analysis %>%
     filter(timepoint_q %in% c(0, .x), timepoint_r %in% c(0, .x),
            individual_q != individual_r, timepoint_q != timepoint_r) %>% # Keep pairs from different individuals, one from day 0 and one from the current timepoint
@@ -62,6 +79,7 @@ wass_results <- map_dfr(timepoints, ~{ # Run Wasserstein test at each timepoint 
          label = paste0("Different vs Engrafted, p=", signif(wt[2], 3))) # Format p-value to 3 significant figures
 })
 
+view(combined)
 counts <- combined %>%
   count(timepoint, type) %>% # Count number of pairs per type per timepoint
   mutate(count_label = paste0(type, ": n=", n)) %>% # Format count as readable label
@@ -83,5 +101,6 @@ combined %>%
             aes(x = 0.99, y = 75, label = full_label),
             inherit.aes = FALSE,
             hjust = 1, vjust = 1.5, size = 3) # Annotate each panel with p-value and sample counts, top-right aligned
+
 
 ggsave("~/PIMMSgit/plots/ani_plot.pdf", plot = last_plot(), width = 16, height = 10)
