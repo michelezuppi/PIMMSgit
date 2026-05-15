@@ -4,8 +4,7 @@ library(tidyverse)
 library(ggpubr)
 setwd("~/PIMMSgit/data/results/gene_clusters/final_outputs/")
 files <- list.files(pattern = "*.tsv", full.names = TRUE)
-list.files()
-view(files)
+
 for (file in files) {
     
     # Extract file name for plot titles
@@ -35,7 +34,7 @@ for (file in files) {
         ) +
         labs(x = "Number of individuals", y = "Count",
              title = paste0(file_name, " — individuals per cluster")) +
-        theme_classic()
+        theme_classic2()
     
     # --- Define prevalent clusters ---
     prevalent <- data %>% 
@@ -65,7 +64,7 @@ for (file in files) {
         ) +
         labs(x = "Mean number of timepoints", y = "Count",
              title = paste0(file_name, " — timepoints per prevalent cluster")) +
-        theme_classic()
+        theme_classic2()
     
     # --- Combine and save ---
     combined <- ggarrange(p1, p2, ncol = 2)
