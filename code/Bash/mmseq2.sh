@@ -16,7 +16,7 @@ mkdir "$input_folder/nr_output"
 
 #Database creation
 
-#mmseqs createdb "$input_folder/all_genes.faa" "$input_folder/all_genes_DB"
+mmseqs createdb "$input_folder/all_genes.faa" "$input_folder/all_genes_DB"
 
 ## Step 1 — Full clustering
 mmseqs cluster "$input_folder/all_genes_DB" "$input_folder/cluster/all_genes_DB_clu" "$input_folder/tmp" \
